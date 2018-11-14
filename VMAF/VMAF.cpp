@@ -52,6 +52,7 @@ struct VMAFData {
 template<typename T>
 static int readFrame(float * VS_RESTRICT refData, float * VS_RESTRICT mainData, float * VS_RESTRICT tempData, const int strideByte, void * userData) noexcept {
     VMAFData * const VS_RESTRICT d = static_cast<VMAFData *>(userData);
+    constexpr float divisor = (sizeof(T) == 1) ? 1.f : 4.f;
 
     std::unique_lock<std::mutex> lck{ d->mtx };
     while (!d->frameSet && !d->eof)
@@ -67,8 +68,8 @@ static int readFrame(float * VS_RESTRICT refData, float * VS_RESTRICT mainData, 
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                refData[x] = refp[x];
-                mainData[x] = mainp[x];
+                refData[x] = refp[x] / divisor;
+                mainData[x] = mainp[x] / divisor;
             }
 
             refp += srcStride;
