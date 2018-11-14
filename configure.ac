@@ -1,4 +1,4 @@
-AC_INIT([VMAF], [1], [https://github.com/HomeOfVapourSynthEvolution/VapourSynth-VMAF/issues], [VMAF], [https://github.com/HomeOfVapourSynthEvolution/VapourSynth-VMAF/])
+AC_INIT([VMAF], [2], [https://github.com/HomeOfVapourSynthEvolution/VapourSynth-VMAF/issues], [VMAF], [https://github.com/HomeOfVapourSynthEvolution/VapourSynth-VMAF/])
 
 : ${CXXFLAGS=""}
 

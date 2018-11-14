@@ -203,24 +203,6 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
         if (pool < 0 || pool > 2)
             throw std::string{ "pool must be 0, 1, or 2" };
 
-        VSMap * args = vsapi->createMap();
-        vsapi->propSetNode(args, "clip", d->reference, paReplace);
-        vsapi->freeNode(d->reference);
-        vsapi->propSetInt(args, "make_linear", 1, paReplace);
-        VSMap * ret = vsapi->invoke(vsapi->getPluginById("com.vapoursynth.std", core), "Cache", args);
-        d->reference = vsapi->propGetNode(ret, "clip", 0, nullptr);
-        d->vi = vsapi->getVideoInfo(d->reference);
-        vsapi->clearMap(args);
-        vsapi->freeMap(ret);
-
-        vsapi->propSetNode(args, "clip", d->distorted, paReplace);
-        vsapi->freeNode(d->distorted);
-        vsapi->propSetInt(args, "make_linear", 1, paReplace);
-        ret = vsapi->invoke(vsapi->getPluginById("com.vapoursynth.std", core), "Cache", args);
-        d->distorted = vsapi->propGetNode(ret, "clip", 0, nullptr);
-        vsapi->freeMap(args);
-        vsapi->freeMap(ret);
-
         if (d->vi->format->id == pfYUV420P8)
             d->fmt = const_cast<char *>("yuv420p");
         else if (d->vi->format->id == pfYUV422P8)
@@ -268,7 +250,7 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
         return;
     }
 
-    vsapi->createFilter(in, out, "VMAF", vmafInit, vmafGetFrame, vmafFree, fmParallelRequests, 0, d.release(), core);
+    vsapi->createFilter(in, out, "VMAF", vmafInit, vmafGetFrame, vmafFree, fmSerial, nfMakeLinear, d.release(), core);
 }
 
 //////////////////////////////////////////
