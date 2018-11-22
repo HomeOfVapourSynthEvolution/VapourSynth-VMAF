@@ -4,8 +4,8 @@ AM_CXXFLAGS = -std=c++14 $(common_cflags)
 
 AM_CPPFLAGS = $(VapourSynth_CFLAGS)
 
-lib_LTLIBRARIES = vsvmaf.la
+lib_LTLIBRARIES = libvsvmaf.la
 
-vsvmaf_la_SOURCES = VMAF/VMAF.cpp
+libvsvmaf_la_SOURCES = VMAF/VMAF.cpp
 
-vsvmaf_la_LDFLAGS = -no-undefined -avoid-version -lvmaf $(PLUGINLDFLAGS)
+libvsvmaf_la_LDFLAGS = -no-undefined -avoid-version -lvmaf $(PLUGINLDFLAGS)
