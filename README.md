@@ -27,18 +27,18 @@ Usage
   * 0 = xml
   * 1 = json
 
-* psnr: Whether PSNR is also calculated.
+* psnr: Whether to also calculate PSNR.
 
-* ssim: Whether SSIM is also calculated.
+* ssim: Whether to also calculate SSIM.
 
-* ms_ssim: Whether MS-SSIM is also calculated.
+* ms_ssim: Whether to also calculate MS-SSIM.
 
 * pool: Sets the method to pool the per-frame scores.
   * 0 = mean
   * 1 = harmonic mean
   * 2 = min
 
-* ci: Whether confidence interval is enabled. Refer to the [VMAF confidence interval](https://github.com/Netflix/vmaf/blob/master/resource/doc/conf_interval.md) page for more details.
+* ci: Whether to enable confidence interval. Refer to the [VMAF confidence interval](https://github.com/Netflix/vmaf/blob/master/resource/doc/conf_interval.md) page for more details.
 
 
 Compilation
@@ -47,7 +47,6 @@ Compilation
 Requires `libvmaf`.
 
 ```
-./autogen.sh
-./configure
-make
+meson build
+ninja -C build
 ```
