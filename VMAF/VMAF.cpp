@@ -190,7 +190,9 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
 
         d->ms_ssim = !!vsapi->propGetInt(in, "ms_ssim", 0, &err);
 
-        const int pool = int64ToIntS(vsapi->propGetInt(in, "pool", 0, &err));
+        int pool = int64ToIntS(vsapi->propGetInt(in, "pool", 0, &err));
+        if (err)
+            pool = 1;
 
         d->ci = !!vsapi->propGetInt(in, "ci", 0, &err);
 

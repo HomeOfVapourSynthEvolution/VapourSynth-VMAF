@@ -13,7 +13,7 @@ The folder `model` must be located in the same folder as `VMAF.dll`.
 Usage
 =====
 
-    vmaf.VMAF(clip reference, clip distorted[, int model=0, string log_path="", int log_fmt=0, bint psnr=False, bint ssim=False, bint ms_ssim=False, int pool=0, bint ci=False])
+    vmaf.VMAF(clip reference, clip distorted[, int model=0, string log_path="", int log_fmt=0, bint psnr=False, bint ssim=False, bint ms_ssim=False, int pool=1, bint ci=False])
 
 * reference, distorted: Clips to calculate VMAF score. Only YUV420P8, YUV422P8, YUV444P8, YUV420P10, YUV422P10, and YUV444P10 are supported.
 
