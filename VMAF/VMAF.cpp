@@ -219,7 +219,7 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
         const std::string pluginPath{ vsapi->getPluginPath(vsapi->getPluginById("com.holywu.vmaf", core)) };
         std::string modelPath{ pluginPath.substr(0, pluginPath.find_last_of('/')) };
         if (model == 0)
-            modelPath += d->ci ? "/model/vmaf_rb_v0.6.2/vmaf_rb_v0.6.2.pkl" : "/model/vmaf_v0.6.1.pkl";
+            modelPath += d->ci ? "/model/vmaf_rb_v0.6.3/vmaf_rb_v0.6.3.pkl" : "/model/vmaf_v0.6.1.pkl";
         else
             modelPath += d->ci ? "/model/vmaf_4k_rb_v0.6.2/vmaf_4k_rb_v0.6.2.pkl" : "/model/vmaf_4k_v0.6.1.pkl";
         d->modelPath = std::make_unique<char[]>(modelPath.length() + 1);
