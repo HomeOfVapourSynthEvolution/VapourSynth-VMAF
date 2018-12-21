@@ -38,7 +38,7 @@ Usage
   * 1 = harmonic mean
   * 2 = min
 
-* ci: Whether to enable confidence interval. Refer to the [VMAF confidence interval](https://github.com/Netflix/vmaf/blob/master/resource/doc/conf_interval.md) page for more details.
+* ci: Whether to enable confidence interval. If True, it uses vmaf_b_v0.6.3 for `model=0` and vmaf_4k_rb_v0.6.2 for `model=1`. Refer to the [VMAF confidence interval](https://github.com/Netflix/vmaf/blob/master/resource/doc/conf_interval.md) page for more details.
 
 
 Compilation
