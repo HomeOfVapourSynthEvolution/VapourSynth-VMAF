@@ -41,7 +41,6 @@
       <WarningLevel>Level3</WarningLevel>
       <DiagnosticsFormat>Column</DiagnosticsFormat>
       <BufferSecurityCheck>false</BufferSecurityCheck>
-      <FloatingPointModel>Fast</FloatingPointModel>
       <ConformanceMode>true</ConformanceMode>
       <EnforceTypeConversionRules>true</EnforceTypeConversionRules>
     </ClCompile>
@@ -49,7 +48,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>libpthread-static.lib;libvmaf.lib;ptools.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libvmaf.lib;pthreads.lib;ptools.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>

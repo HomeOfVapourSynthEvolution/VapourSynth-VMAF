@@ -43,10 +43,10 @@ struct VMAFData {
     char * fmt, * logFmt, * pool;
     std::unique_ptr<char[]> modelPath, logPath;
     bool psnr, ssim, ms_ssim, ci, frameSet, eof;
+    int numThreads, error;
     std::thread vmafThread;
     std::mutex mtx;
     std::condition_variable cond;
-    int error;
 };
 
 template<typename T>
@@ -94,9 +94,9 @@ static int readFrame(float * VS_RESTRICT refData, float * VS_RESTRICT mainData, 
 
 static void callVMAF(VMAFData * const VS_RESTRICT d) noexcept {
     if (d->vi->format->bytesPerSample == 1)
-        d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint8_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, d->psnr, d->ssim, d->ms_ssim, d->pool, 0, 1, d->ci);
+        d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint8_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, d->psnr, d->ssim, d->ms_ssim, d->pool, d->numThreads, 1, d->ci);
     else
-        d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint16_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, d->psnr, d->ssim, d->ms_ssim, d->pool, 0, 1, d->ci);
+        d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint16_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, d->psnr, d->ssim, d->ms_ssim, d->pool, d->numThreads, 1, d->ci);
 
     if (d->error) {
         d->mtx.lock();
@@ -122,7 +122,7 @@ static const VSFrameRef *VS_CC vmafGetFrame(int n, int activationReason, void **
             d->cond.wait(lck);
 
         if (d->error) {
-            vsapi->setFilterError(std::string{ "VMAF: libvmaf error" }.c_str(), frameCtx);
+            vsapi->setFilterError("VMAF: libvmaf error", frameCtx);
             return nullptr;
         }
 
@@ -243,6 +243,8 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
             d->pool = const_cast<char *>("harmonic_mean");
         else
             d->pool = const_cast<char *>("min");
+
+        d->numThreads = vsapi->getCoreInfo(core)->numThreads;
 
         d->vmafThread = std::thread{ callVMAF, d.get() };
     } catch (const std::string & error) {
