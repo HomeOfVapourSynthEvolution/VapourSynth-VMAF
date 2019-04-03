@@ -170,6 +170,9 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
         if (!isConstantFormat(d->vi) || d->vi->format->sampleType != stInteger || d->vi->format->bitsPerSample > 16)
             throw std::string{ "only constant format 8-16 bit integer input supported" };
 
+        if (d->vi->format->colorFamily == cmRGB)
+            throw std::string{ "RGB color family is not supported" };
+
         if (!isSameFormat(vsapi->getVideoInfo(d->distorted), d->vi))
             throw std::string{ "both clips must have the same dimensions and be the same format" };
 
