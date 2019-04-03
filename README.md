@@ -15,7 +15,7 @@ Usage
 
     vmaf.VMAF(clip reference, clip distorted[, int model=0, string log_path="", int log_fmt=0, bint ssim=False, bint ms_ssim=False, int pool=1, bint ci=False])
 
-* reference, distorted: Clips to calculate VMAF score. Any planar format with integer sample type of 8-16 bit depth is supported.
+* reference, distorted: Clips to calculate VMAF score. Any planar format except RGB with integer sample type of 8-16 bit depth is supported.
 
 * model: Sets which model to use. Refer to the [models](https://github.com/Netflix/vmaf/blob/master/resource/doc/models.md) page for more details.
   * 0 = vmaf_v0.6.1.pkl
