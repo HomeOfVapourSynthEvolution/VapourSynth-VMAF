@@ -1,7 +1,7 @@
 /*
   MIT License
 
-  Copyright (c) 2018 HolyWu
+  Copyright (c) 2018-2019 HolyWu
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -42,8 +42,9 @@ struct VMAFData {
     double vmafScore;
     char * fmt, * logFmt, * pool;
     std::unique_ptr<char[]> modelPath, logPath;
-    bool psnr, ssim, ms_ssim, ci, frameSet, eof;
+    bool ssim, ms_ssim, ci, frameSet, eof;
     int numThreads, error;
+    float divisor;
     std::thread vmafThread;
     std::mutex mtx;
     std::condition_variable cond;
@@ -52,7 +53,6 @@ struct VMAFData {
 template<typename T>
 static int readFrame(float * VS_RESTRICT refData, float * VS_RESTRICT mainData, float * VS_RESTRICT tempData, const int strideByte, void * userData) noexcept {
     VMAFData * const VS_RESTRICT d = static_cast<VMAFData *>(userData);
-    constexpr float divisor = (sizeof(T) == 1) ? 1.f : 4.f;
 
     std::unique_lock<std::mutex> lck{ d->mtx };
     while (!d->frameSet && !d->eof)
@@ -68,8 +68,8 @@ static int readFrame(float * VS_RESTRICT refData, float * VS_RESTRICT mainData, 
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                refData[x] = refp[x] / divisor;
-                mainData[x] = mainp[x] / divisor;
+                refData[x] = refp[x] / d->divisor;
+                mainData[x] = mainp[x] / d->divisor;
             }
 
             refp += srcStride;
@@ -94,9 +94,9 @@ static int readFrame(float * VS_RESTRICT refData, float * VS_RESTRICT mainData, 
 
 static void callVMAF(VMAFData * const VS_RESTRICT d) noexcept {
     if (d->vi->format->bytesPerSample == 1)
-        d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint8_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, d->psnr, d->ssim, d->ms_ssim, d->pool, d->numThreads, 1, d->ci);
+        d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint8_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, 0, d->ssim, d->ms_ssim, d->pool, d->numThreads, 1, d->ci);
     else
-        d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint16_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, d->psnr, d->ssim, d->ms_ssim, d->pool, d->numThreads, 1, d->ci);
+        d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint16_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, 0, d->ssim, d->ms_ssim, d->pool, d->numThreads, 1, d->ci);
 
     if (d->error) {
         d->mtx.lock();
@@ -167,10 +167,8 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
     d->vsapi = vsapi;
 
     try {
-        if (!isConstantFormat(d->vi) ||
-            (d->vi->format->id != pfYUV420P8 && d->vi->format->id != pfYUV422P8 && d->vi->format->id != pfYUV444P8 &&
-            d->vi->format->id != pfYUV420P10 && d->vi->format->id != pfYUV422P10 && d->vi->format->id != pfYUV444P10))
-            throw std::string{ "only constant format YUV420P8, YUV422P8, YUV444P8, YUV420P10, YUV422P10, and YUV444P10 supported" };
+        if (!isConstantFormat(d->vi) || d->vi->format->sampleType != stInteger || d->vi->format->bitsPerSample > 16)
+            throw std::string{ "only constant format 8-16 bit integer input supported" };
 
         if (!isSameFormat(vsapi->getVideoInfo(d->distorted), d->vi))
             throw std::string{ "both clips must have the same dimensions and be the same format" };
@@ -183,8 +181,6 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
         const char * logPath = vsapi->propGetData(in, "log_path", 0, &err);
 
         const int logFmt = int64ToIntS(vsapi->propGetInt(in, "log_fmt", 0, &err));
-
-        d->psnr = !!vsapi->propGetInt(in, "psnr", 0, &err);
 
         d->ssim = !!vsapi->propGetInt(in, "ssim", 0, &err);
 
@@ -205,18 +201,7 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
         if (pool < 0 || pool > 2)
             throw std::string{ "pool must be 0, 1, or 2" };
 
-        if (d->vi->format->id == pfYUV420P8)
-            d->fmt = const_cast<char *>("yuv420p");
-        else if (d->vi->format->id == pfYUV422P8)
-            d->fmt = const_cast<char *>("yuv422p");
-        else if (d->vi->format->id == pfYUV444P8)
-            d->fmt = const_cast<char *>("yuv444p");
-        else if (d->vi->format->id == pfYUV420P10)
-            d->fmt = const_cast<char *>("yuv420p10le");
-        else if (d->vi->format->id == pfYUV422P10)
-            d->fmt = const_cast<char *>("yuv422p10le");
-        else
-            d->fmt = const_cast<char *>("yuv444p10le");
+        d->fmt = const_cast<char *>("yuv420p");
 
         const std::string pluginPath{ vsapi->getPluginPath(vsapi->getPluginById("com.holywu.vmaf", core)) };
         std::string modelPath{ pluginPath.substr(0, pluginPath.find_last_of('/')) };
@@ -246,6 +231,8 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
 
         d->numThreads = vsapi->getCoreInfo(core)->numThreads;
 
+        d->divisor = 1 << (d->vi->format->bitsPerSample - 8);
+
         d->vmafThread = std::thread{ callVMAF, d.get() };
     } catch (const std::string & error) {
         vsapi->setError(out, ("VMAF: " + error).c_str());
@@ -268,7 +255,6 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegiste
                  "model:int:opt;"
                  "log_path:data:opt;"
                  "log_fmt:int:opt;"
-                 "psnr:int:opt;"
                  "ssim:int:opt;"
                  "ms_ssim:int:opt;"
                  "pool:int:opt;"

@@ -1,7 +1,7 @@
 project('VMAF', 'cpp',
   default_options : ['buildtype=release', 'b_ndebug=if-release', 'cpp_std=c++14'],
   meson_version : '>=0.48.0',
-  version : '4'
+  version : '5'
 )
 
 add_project_arguments('-ffast-math', language : 'cpp')
