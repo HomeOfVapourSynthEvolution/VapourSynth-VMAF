@@ -22,8 +22,9 @@
   SOFTWARE.
 */
 
-#include <condition_variable>
 #include <cstring>
+
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -105,12 +106,12 @@ static void callVMAF(VMAFData * const VS_RESTRICT d) noexcept {
     }
 }
 
-static void VS_CC vmafInit(VSMap *in, VSMap *out, void **instanceData, VSNode *node, VSCore *core, const VSAPI *vsapi) {
+static void VS_CC vmafInit(VSMap * in, VSMap * out, void ** instanceData, VSNode * node, VSCore * core, const VSAPI * vsapi) {
     VMAFData * d = static_cast<VMAFData *>(*instanceData);
     vsapi->setVideoInfo(d->vi, 1, node);
 }
 
-static const VSFrameRef *VS_CC vmafGetFrame(int n, int activationReason, void **instanceData, void **frameData, VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi) {
+static const VSFrameRef * VS_CC vmafGetFrame(int n, int activationReason, void ** instanceData, void ** frameData, VSFrameContext * frameCtx, VSCore * core, const VSAPI * vsapi) {
     VMAFData * d = static_cast<VMAFData *>(*instanceData);
 
     if (activationReason == arInitial) {
@@ -141,7 +142,7 @@ static const VSFrameRef *VS_CC vmafGetFrame(int n, int activationReason, void **
     return nullptr;
 }
 
-static void VS_CC vmafFree(void *instanceData, VSCore *core, const VSAPI *vsapi) {
+static void VS_CC vmafFree(void * instanceData, VSCore * core, const VSAPI * vsapi) {
     VMAFData * d = static_cast<VMAFData *>(instanceData);
 
     d->mtx.lock();
@@ -157,7 +158,7 @@ static void VS_CC vmafFree(void *instanceData, VSCore *core, const VSAPI *vsapi)
     delete d;
 }
 
-static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore *core, const VSAPI *vsapi) {
+static void VS_CC vmafCreate(const VSMap * in, VSMap * out, void * userData, VSCore * core, const VSAPI * vsapi) {
     std::unique_ptr<VMAFData> d = std::make_unique<VMAFData>();
     int err;
 
@@ -250,7 +251,7 @@ static void VS_CC vmafCreate(const VSMap *in, VSMap *out, void *userData, VSCore
 //////////////////////////////////////////
 // Init
 
-VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
+VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin * plugin) {
     configFunc("com.holywu.vmaf", "vmaf", "Video Multi-Method Assessment Fusion", VAPOURSYNTH_API_VERSION, 1, plugin);
     registerFunc("VMAF",
                  "reference:clip;"
