@@ -29,6 +29,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <type_traits>
 
 #include <VapourSynth.h>
 #include <VSHelper.h>
@@ -69,8 +70,13 @@ static int readFrame(float * VS_RESTRICT refData, float * VS_RESTRICT mainData, 
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                refData[x] = refp[x] / d->divisor;
-                mainData[x] = mainp[x] / d->divisor;
+                if constexpr (std::is_same_v<T, uint8_t>) {
+                    refData[x] = refp[x];
+                    mainData[x] = mainp[x];
+                } else {
+                    refData[x] = refp[x] * d->divisor;
+                    mainData[x] = mainp[x] * d->divisor;
+                }
             }
 
             refp += srcStride;
@@ -237,7 +243,7 @@ static void VS_CC vmafCreate(const VSMap * in, VSMap * out, void * userData, VSC
 
         d->numThreads = vsapi->getCoreInfo(core)->numThreads;
 
-        d->divisor = 1 << (d->vi->format->bitsPerSample - 8);
+        d->divisor = 1.0f / (1 << (d->vi->format->bitsPerSample - 8));
 
         d->vmafThread = std::thread{ callVMAF, d.get() };
     } catch (const std::string & error) {

@@ -40,6 +40,7 @@
       <WarningLevel>Level3</WarningLevel>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
