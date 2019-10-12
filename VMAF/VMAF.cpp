@@ -199,8 +199,8 @@ static void VS_CC vmafCreate(const VSMap * in, VSMap * out, void * userData, VSC
         if (model < 0 || model > 1)
             throw std::string{ "model must be 0 or 1" };
 
-        if (logFmt < 0 || logFmt > 1)
-            throw std::string{ "log_fmt must be 0 or 1" };
+        if (logFmt < 0 || logFmt > 2)
+            throw std::string{ "log_fmt must be 0, 1, or 2" };
 
         if (pool < 0 || pool > 2)
             throw std::string{ "pool must be 0, 1, or 2" };
@@ -223,8 +223,10 @@ static void VS_CC vmafCreate(const VSMap * in, VSMap * out, void * userData, VSC
 
         if (logFmt == 0)
             d->logFmt = const_cast<char *>("xml");
-        else
+        else if (logFmt == 1)
             d->logFmt = const_cast<char *>("json");
+        else
+            d->logFmt = const_cast<char *>("csv");
 
         if (pool == 0)
             d->pool = const_cast<char *>("mean");

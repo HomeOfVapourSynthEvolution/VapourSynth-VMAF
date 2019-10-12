@@ -13,7 +13,7 @@ The folder `model` must be located in the same folder as `VMAF.dll`.
 Usage
 =====
 
-    vmaf.VMAF(clip reference, clip distorted[, int model=0, string log_path="", int log_fmt=0, bint ssim=False, bint ms_ssim=False, int pool=1, bint ci=False])
+    vmaf.VMAF(clip reference, clip distorted[, int model=0, string log_path=None, int log_fmt=0, bint ssim=False, bint ms_ssim=False, int pool=1, bint ci=False])
 
 * reference, distorted: Clips to calculate VMAF score. Any planar format except RGB with integer sample type of 8-16 bit depth is supported.
 
@@ -26,6 +26,7 @@ Usage
 * log_fmt: Sets the format of the log file.
   * 0 = xml
   * 1 = json
+  * 2 = csv
 
 * ssim: Whether to also calculate SSIM score.
 
