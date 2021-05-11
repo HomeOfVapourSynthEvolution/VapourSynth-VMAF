@@ -253,7 +253,9 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore
         else
             d->pool = const_cast<char*>("min");
 
-        d->numThreads = vsapi->getCoreInfo(core)->numThreads;
+        VSCoreInfo info;
+        vsapi->getCoreInfo2(core, &info);
+        d->numThreads = info.numThreads;
 
         d->factor = 1.0f / (1 << (d->vi->format->bitsPerSample - 8));
 
