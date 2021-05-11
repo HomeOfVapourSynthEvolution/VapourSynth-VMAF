@@ -1,7 +1,7 @@
 /*
   MIT License
 
-  Copyright (c) 2018-2019 HolyWu
+  Copyright (c) 2018-2021 HolyWu
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -37,36 +37,46 @@
 #include <libvmaf.h>
 
 struct VMAFData {
-    VSNodeRef * reference, * distorted;
-    const VSVideoInfo * vi;
-    const VSAPI * vsapi;
-    const VSFrameRef * ref, * main;
+    VSNodeRef* reference;
+    VSNodeRef* distorted;
+    const VSVideoInfo* vi;
+    const VSAPI* vsapi;
+    const VSFrameRef* ref;
+    const VSFrameRef* main;
     double vmafScore;
-    char * fmt, * logFmt, * pool;
-    std::unique_ptr<char[]> modelPath, logPath;
-    bool ssim, ms_ssim, ci, frameSet, eof;
-    int numThreads, error;
-    float divisor;
+    char* fmt;
+    char* logFmt;
+    char* pool;
+    std::unique_ptr<char[]> modelPath;
+    std::unique_ptr<char[]> logPath;
+    bool ssim;
+    bool ms_ssim;
+    bool ci;
+    bool frameSet;
+    bool eof;
+    int numThreads;
+    int error;
+    float factor;
     std::thread vmafThread;
-    std::mutex mtx;
+    std::mutex mutex;
     std::condition_variable cond;
 };
 
 template<typename T>
-static int readFrame(float * VS_RESTRICT refData, float * VS_RESTRICT mainData, float * VS_RESTRICT tempData, const int strideByte, void * userData) noexcept {
-    VMAFData * const VS_RESTRICT d = static_cast<VMAFData *>(userData);
+static int readFrame(float* VS_RESTRICT refData, float* VS_RESTRICT mainData, float* VS_RESTRICT tempData, const int strideByte, void* userData) noexcept {
+    VMAFData* const VS_RESTRICT d = static_cast<VMAFData*>(userData);
 
-    std::unique_lock<std::mutex> lck{ d->mtx };
+    std::unique_lock<std::mutex> lock{ d->mutex };
     while (!d->frameSet && !d->eof)
-        d->cond.wait(lck);
+        d->cond.wait(lock);
 
     if (d->frameSet) {
         const int width = d->vsapi->getFrameWidth(d->ref, 0);
         const int height = d->vsapi->getFrameHeight(d->ref, 0);
         const int srcStride = d->vsapi->getStride(d->ref, 0) / sizeof(T);
         const int dstStride = strideByte / sizeof(float);
-        const T * refp = reinterpret_cast<const T *>(d->vsapi->getReadPtr(d->ref, 0));
-        const T * mainp = reinterpret_cast<const T *>(d->vsapi->getReadPtr(d->main, 0));
+        const T* refp = reinterpret_cast<const T*>(d->vsapi->getReadPtr(d->ref, 0));
+        const T* mainp = reinterpret_cast<const T*>(d->vsapi->getReadPtr(d->main, 0));
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -74,8 +84,8 @@ static int readFrame(float * VS_RESTRICT refData, float * VS_RESTRICT mainData, 
                     refData[x] = refp[x];
                     mainData[x] = mainp[x];
                 } else {
-                    refData[x] = refp[x] * d->divisor;
-                    mainData[x] = mainp[x] * d->divisor;
+                    refData[x] = refp[x] * d->factor;
+                    mainData[x] = mainp[x] * d->factor;
                 }
             }
 
@@ -99,42 +109,42 @@ static int readFrame(float * VS_RESTRICT refData, float * VS_RESTRICT mainData, 
     return ret ? 2 : 0;
 }
 
-static void callVMAF(VMAFData * const VS_RESTRICT d) noexcept {
+static void callVMAF(VMAFData* const VS_RESTRICT d) noexcept {
     if (d->vi->format->bytesPerSample == 1)
         d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint8_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, 0, d->ssim, d->ms_ssim, d->pool, d->numThreads, 1, d->ci);
     else
         d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint16_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, 0, d->ssim, d->ms_ssim, d->pool, d->numThreads, 1, d->ci);
 
     if (d->error) {
-        d->mtx.lock();
+        d->mutex.lock();
         d->cond.notify_one();
-        d->mtx.unlock();
+        d->mutex.unlock();
     }
 }
 
-static void VS_CC vmafInit(VSMap * in, VSMap * out, void ** instanceData, VSNode * node, VSCore * core, const VSAPI * vsapi) {
-    VMAFData * d = static_cast<VMAFData *>(*instanceData);
+static void VS_CC vmafInit(VSMap* in, VSMap* out, void** instanceData, VSNode* node, VSCore* core, const VSAPI* vsapi) {
+    VMAFData* d = static_cast<VMAFData*>(*instanceData);
     vsapi->setVideoInfo(d->vi, 1, node);
 }
 
-static const VSFrameRef * VS_CC vmafGetFrame(int n, int activationReason, void ** instanceData, void ** frameData, VSFrameContext * frameCtx, VSCore * core, const VSAPI * vsapi) {
-    VMAFData * d = static_cast<VMAFData *>(*instanceData);
+static const VSFrameRef* VS_CC vmafGetFrame(int n, int activationReason, void** instanceData, void** frameData, VSFrameContext* frameCtx, VSCore* core, const VSAPI* vsapi) {
+    VMAFData* d = static_cast<VMAFData*>(*instanceData);
 
     if (activationReason == arInitial) {
         vsapi->requestFrameFilter(n, d->reference, frameCtx);
         vsapi->requestFrameFilter(n, d->distorted, frameCtx);
     } else if (activationReason == arAllFramesReady) {
-        std::unique_lock<std::mutex> lck{ d->mtx };
+        std::unique_lock<std::mutex> lock{ d->mutex };
         while (d->frameSet && !d->error)
-            d->cond.wait(lck);
+            d->cond.wait(lock);
 
         if (d->error) {
             vsapi->setFilterError("VMAF: libvmaf error", frameCtx);
             return nullptr;
         }
 
-        const VSFrameRef * ref = vsapi->getFrameFilter(n, d->reference, frameCtx);
-        const VSFrameRef * main = vsapi->getFrameFilter(n, d->distorted, frameCtx);
+        const VSFrameRef* ref = vsapi->getFrameFilter(n, d->reference, frameCtx);
+        const VSFrameRef* main = vsapi->getFrameFilter(n, d->distorted, frameCtx);
         d->ref = vsapi->cloneFrameRef(ref);
         d->main = vsapi->cloneFrameRef(main);
         d->frameSet = true;
@@ -148,13 +158,13 @@ static const VSFrameRef * VS_CC vmafGetFrame(int n, int activationReason, void *
     return nullptr;
 }
 
-static void VS_CC vmafFree(void * instanceData, VSCore * core, const VSAPI * vsapi) {
-    VMAFData * d = static_cast<VMAFData *>(instanceData);
+static void VS_CC vmafFree(void* instanceData, VSCore* core, const VSAPI* vsapi) {
+    VMAFData* d = static_cast<VMAFData*>(instanceData);
 
-    d->mtx.lock();
+    d->mutex.lock();
     d->eof = true;
     d->cond.notify_one();
-    d->mtx.unlock();
+    d->mutex.unlock();
 
     d->vmafThread.join();
 
@@ -164,31 +174,33 @@ static void VS_CC vmafFree(void * instanceData, VSCore * core, const VSAPI * vsa
     delete d;
 }
 
-static void VS_CC vmafCreate(const VSMap * in, VSMap * out, void * userData, VSCore * core, const VSAPI * vsapi) {
-    std::unique_ptr<VMAFData> d = std::make_unique<VMAFData>();
-    int err;
+static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore* core, const VSAPI* vsapi) {
+    using namespace std::literals;
 
-    d->reference = vsapi->propGetNode(in, "reference", 0, nullptr);
-    d->distorted = vsapi->propGetNode(in, "distorted", 0, nullptr);
-    d->vi = vsapi->getVideoInfo(d->reference);
-    d->vsapi = vsapi;
+    std::unique_ptr<VMAFData> d = std::make_unique<VMAFData>();
 
     try {
+        d->reference = vsapi->propGetNode(in, "reference", 0, nullptr);
+        d->distorted = vsapi->propGetNode(in, "distorted", 0, nullptr);
+        d->vi = vsapi->getVideoInfo(d->reference);
+        d->vsapi = vsapi;
+        int err;
+
         if (!isConstantFormat(d->vi) || d->vi->format->sampleType != stInteger || d->vi->format->bitsPerSample > 16)
-            throw std::string{ "only constant format 8-16 bit integer input supported" };
+            throw "only constant format 8-16 bit integer input supported";
 
         if (d->vi->format->colorFamily == cmRGB)
-            throw std::string{ "RGB color family is not supported" };
+            throw "RGB format is not supported";
 
         if (!isSameFormat(vsapi->getVideoInfo(d->distorted), d->vi))
-            throw std::string{ "both clips must have the same dimensions and be the same format" };
+            throw "both clips must have the same format and dimensions";
 
         if (vsapi->getVideoInfo(d->distorted)->numFrames != d->vi->numFrames)
-            throw std::string{ "both clips' number of frames don't match" };
+            throw "both clips' number of frames don't match";
 
         const int model = int64ToIntS(vsapi->propGetInt(in, "model", 0, &err));
 
-        const char * logPath = vsapi->propGetData(in, "log_path", 0, &err);
+        const char* logPath = vsapi->propGetData(in, "log_path", 0, &err);
 
         const int logFmt = int64ToIntS(vsapi->propGetInt(in, "log_fmt", 0, &err));
 
@@ -203,15 +215,15 @@ static void VS_CC vmafCreate(const VSMap * in, VSMap * out, void * userData, VSC
         d->ci = !!vsapi->propGetInt(in, "ci", 0, &err);
 
         if (model < 0 || model > 1)
-            throw std::string{ "model must be 0 or 1" };
+            throw "model must be 0 or 1";
 
         if (logFmt < 0 || logFmt > 2)
-            throw std::string{ "log_fmt must be 0, 1, or 2" };
+            throw "log_fmt must be 0, 1, or 2";
 
         if (pool < 0 || pool > 2)
-            throw std::string{ "pool must be 0, 1, or 2" };
+            throw "pool must be 0, 1, or 2";
 
-        d->fmt = const_cast<char *>("yuv420p");
+        d->fmt = const_cast<char*>("yuv420p");
 
         const std::string pluginPath{ vsapi->getPluginPath(vsapi->getPluginById("com.holywu.vmaf", core)) };
         std::string modelPath{ pluginPath.substr(0, pluginPath.find_last_of('/')) };
@@ -228,26 +240,26 @@ static void VS_CC vmafCreate(const VSMap * in, VSMap * out, void * userData, VSC
         }
 
         if (logFmt == 0)
-            d->logFmt = const_cast<char *>("xml");
+            d->logFmt = const_cast<char*>("xml");
         else if (logFmt == 1)
-            d->logFmt = const_cast<char *>("json");
+            d->logFmt = const_cast<char*>("json");
         else
-            d->logFmt = const_cast<char *>("csv");
+            d->logFmt = const_cast<char*>("csv");
 
         if (pool == 0)
-            d->pool = const_cast<char *>("mean");
+            d->pool = const_cast<char*>("mean");
         else if (pool == 1)
-            d->pool = const_cast<char *>("harmonic_mean");
+            d->pool = const_cast<char*>("harmonic_mean");
         else
-            d->pool = const_cast<char *>("min");
+            d->pool = const_cast<char*>("min");
 
         d->numThreads = vsapi->getCoreInfo(core)->numThreads;
 
-        d->divisor = 1.0f / (1 << (d->vi->format->bitsPerSample - 8));
+        d->factor = 1.0f / (1 << (d->vi->format->bitsPerSample - 8));
 
         d->vmafThread = std::thread{ callVMAF, d.get() };
-    } catch (const std::string & error) {
-        vsapi->setError(out, ("VMAF: " + error).c_str());
+    } catch (const char* error) {
+        vsapi->setError(out, ("VMAF: "s + error).c_str());
         vsapi->freeNode(d->reference);
         vsapi->freeNode(d->distorted);
         return;
@@ -259,7 +271,7 @@ static void VS_CC vmafCreate(const VSMap * in, VSMap * out, void * userData, VSC
 //////////////////////////////////////////
 // Init
 
-VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin * plugin) {
+VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin* plugin) {
     configFunc("com.holywu.vmaf", "vmaf", "Video Multi-Method Assessment Fusion", VAPOURSYNTH_API_VERSION, 1, plugin);
     registerFunc("VMAF",
                  "reference:clip;"
