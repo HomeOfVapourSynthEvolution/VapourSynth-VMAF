@@ -39,7 +39,3 @@ shared_module('vmaf', sources,
   install_dir: install_dir,
   gnu_symbol_visibility: 'hidden'
 )
-
-install_subdir('VMAF/model',
-  install_dir : vapoursynth_plugindir
-)

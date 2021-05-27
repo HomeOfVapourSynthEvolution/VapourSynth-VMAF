@@ -1,43 +1,36 @@
 Description
 ===========
 
-VMAF filter for VapourSynth. VMAF is a perceptual video quality assessment algorithm developed by Netflix. Refer to the [FAQ](https://github.com/Netflix/vmaf/blob/master/FAQ.md) page for frequently asked questions of VMAF.
-
-
-Note
-====
-
-The folder `model` must be located in the same folder as `VMAF.dll`.
+VMAF filter for VapourSynth. VMAF is a perceptual video quality assessment algorithm developed by Netflix. Refer to [this](https://github.com/Netflix/vmaf/blob/master/FAQ.md) page for more details.
 
 
 Usage
 =====
 
-    vmaf.VMAF(clip reference, clip distorted[, int model=0, string log_path=None, int log_fmt=0, bint ssim=False, bint ms_ssim=False, int pool=1, bint ci=False])
+    vmaf.VMAF(clip reference, clip distorted, string log_path[, int log_format=0, int[] model=[0], int[] feature=[]])
 
-* reference, distorted: Clips to calculate VMAF score. Any planar format except RGB with integer sample type of 8-16 bit depth is supported.
+* reference, distorted: Clips to calculate VMAF score. Only YUV format with integer sample type of 8-16 bit depth and chroma subsampling of 420/422/444 is supported.
 
-* model: Sets which model to use. Refer to the [models](https://github.com/Netflix/vmaf/blob/master/resource/doc/models.md) page for more details.
-  * 0 = vmaf_v0.6.1.pkl
-  * 1 = vmaf_4k_v0.6.1.pkl
+* log_path: Path to the log file.
 
-* log_path: Sets the path of the log file.
+* log_format: Format of the log file.
+  * 0 = XML
+  * 1 = JSON
+  * 2 = CSV
+  * 3 = subtitle
 
-* log_fmt: Sets the format of the log file.
-  * 0 = xml
-  * 1 = json
-  * 2 = csv
+* model: Model to use. Refer to [this](https://github.com/Netflix/vmaf/blob/master/resource/doc/models.md), [this](https://netflixtechblog.com/toward-a-better-quality-metric-for-the-video-community-7ed94e752a30) and [this](https://github.com/Netflix/vmaf/blob/master/resource/doc/conf_interval.md) page for more details.
+  * 0 = vmaf_v0.6.1 (default mode)
+  * 1 = vmaf_v0.6.1neg (NEG mode)
+  * 2 = vmaf_b_v0.6.3 (Confidence Interval)
+  * 3 = vmaf_4k_v0.6.1
 
-* ssim: Whether to also calculate SSIM score.
-
-* ms_ssim: Whether to also calculate MS-SSIM score.
-
-* pool: Sets the method to pool the per-frame scores.
-  * 0 = mean
-  * 1 = harmonic mean
-  * 2 = min
-
-* ci: Whether to enable confidence interval. If True, it uses vmaf_b_v0.6.3 for `model=0` and vmaf_4k_rb_v0.6.2 for `model=1`. Refer to the [VMAF confidence interval](https://github.com/Netflix/vmaf/blob/master/resource/doc/conf_interval.md) page for more details.
+* feature: Additional metrics to enable.
+  * 0: PSNR
+  * 1: PSNR-HVS
+  * 2: SSIM
+  * 3: MS-SSIM
+  * 4: CIEDE2000
 
 
 Compilation

@@ -24,246 +24,253 @@
 
 #include <cstring>
 
-#include <condition_variable>
+#include <algorithm>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <thread>
-#include <type_traits>
+#include <vector>
 
 #include <VapourSynth.h>
 #include <VSHelper.h>
 
+extern "C" {
 #include <libvmaf.h>
+}
 
-struct VMAFData {
+using namespace std::literals;
+
+static constexpr const char* modelName[]{ "vmaf", "vmaf_neg", "vmaf_b", "vmaf_4k" };
+static constexpr const char* modelVersion[]{ "vmaf_v0.6.1", "vmaf_v0.6.1neg", "vmaf_b_v0.6.3", "vmaf_4k_v0.6.1" };
+
+static constexpr const char* featureName[]{ "psnr", "psnr_hvs", "float_ssim", "float_ms_ssim", "ciede" };
+
+struct VMAFData final {
     VSNodeRef* reference;
     VSNodeRef* distorted;
     const VSVideoInfo* vi;
-    const VSAPI* vsapi;
-    const VSFrameRef* ref;
-    const VSFrameRef* main;
-    double vmafScore;
-    char* fmt;
-    char* logFmt;
-    char* pool;
-    std::unique_ptr<char[]> modelPath;
-    std::unique_ptr<char[]> logPath;
-    bool ssim;
-    bool ms_ssim;
-    bool ci;
-    bool frameSet;
-    bool eof;
-    int numThreads;
-    int error;
-    float factor;
-    std::thread vmafThread;
-    std::mutex mutex;
-    std::condition_variable cond;
+    std::string logPath;
+    VmafOutputFormat logFormat;
+    std::vector<VmafModel*> model;
+    std::vector<VmafModelCollection*> modelCollection;
+    VmafContext* vmaf;
+    VmafPixelFormat pixelFormat;
+    bool chroma;
 };
 
-template<typename T>
-static int readFrame(float* VS_RESTRICT refData, float* VS_RESTRICT mainData, float* VS_RESTRICT tempData, const int strideByte, void* userData) noexcept {
-    VMAFData* const VS_RESTRICT d = static_cast<VMAFData*>(userData);
-
-    std::unique_lock<std::mutex> lock{ d->mutex };
-    while (!d->frameSet && !d->eof)
-        d->cond.wait(lock);
-
-    if (d->frameSet) {
-        const int width = d->vsapi->getFrameWidth(d->ref, 0);
-        const int height = d->vsapi->getFrameHeight(d->ref, 0);
-        const int srcStride = d->vsapi->getStride(d->ref, 0) / sizeof(T);
-        const int dstStride = strideByte / sizeof(float);
-        const T* refp = reinterpret_cast<const T*>(d->vsapi->getReadPtr(d->ref, 0));
-        const T* mainp = reinterpret_cast<const T*>(d->vsapi->getReadPtr(d->main, 0));
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if constexpr (std::is_same_v<T, uint8_t>) {
-                    refData[x] = refp[x];
-                    mainData[x] = mainp[x];
-                } else {
-                    refData[x] = refp[x] * d->factor;
-                    mainData[x] = mainp[x] * d->factor;
-                }
-            }
-
-            refp += srcStride;
-            mainp += srcStride;
-            refData += dstStride;
-            mainData += dstStride;
-        }
-    }
-
-    const bool ret = !d->frameSet;
-
-    d->vsapi->freeFrame(d->ref);
-    d->vsapi->freeFrame(d->main);
-    d->ref = nullptr;
-    d->main = nullptr;
-    d->frameSet = false;
-
-    d->cond.notify_one();
-
-    return ret ? 2 : 0;
-}
-
-static void callVMAF(VMAFData* const VS_RESTRICT d) noexcept {
-    if (d->vi->format->bytesPerSample == 1)
-        d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint8_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, 0, d->ssim, d->ms_ssim, d->pool, d->numThreads, 1, d->ci);
-    else
-        d->error = compute_vmaf(&d->vmafScore, d->fmt, d->vi->width, d->vi->height, readFrame<uint16_t>, d, d->modelPath.get(), d->logPath.get(), d->logFmt, 0, 0, 0, 0, 0, d->ssim, d->ms_ssim, d->pool, d->numThreads, 1, d->ci);
-
-    if (d->error) {
-        d->mutex.lock();
-        d->cond.notify_one();
-        d->mutex.unlock();
-    }
-}
-
-static void VS_CC vmafInit(VSMap* in, VSMap* out, void** instanceData, VSNode* node, VSCore* core, const VSAPI* vsapi) {
-    VMAFData* d = static_cast<VMAFData*>(*instanceData);
+static void VS_CC vmafInit([[maybe_unused]] VSMap* in, [[maybe_unused]] VSMap* out, void** instanceData, VSNode* node, [[maybe_unused]] VSCore* core, const VSAPI* vsapi) {
+    auto d{ static_cast<const VMAFData*>(*instanceData) };
     vsapi->setVideoInfo(d->vi, 1, node);
 }
 
-static const VSFrameRef* VS_CC vmafGetFrame(int n, int activationReason, void** instanceData, void** frameData, VSFrameContext* frameCtx, VSCore* core, const VSAPI* vsapi) {
-    VMAFData* d = static_cast<VMAFData*>(*instanceData);
+static const VSFrameRef* VS_CC vmafGetFrame(int n, int activationReason, void** instanceData, [[maybe_unused]] void** frameData, VSFrameContext* frameCtx, [[maybe_unused]] VSCore* core, const VSAPI* vsapi) {
+    auto d{ static_cast<const VMAFData*>(*instanceData) };
 
     if (activationReason == arInitial) {
         vsapi->requestFrameFilter(n, d->reference, frameCtx);
         vsapi->requestFrameFilter(n, d->distorted, frameCtx);
     } else if (activationReason == arAllFramesReady) {
-        std::unique_lock<std::mutex> lock{ d->mutex };
-        while (d->frameSet && !d->error)
-            d->cond.wait(lock);
+        auto reference{ vsapi->getFrameFilter(n, d->reference, frameCtx) };
+        auto distorted{ vsapi->getFrameFilter(n, d->distorted, frameCtx) };
 
-        if (d->error) {
-            vsapi->setFilterError("VMAF: libvmaf error", frameCtx);
+        VmafPicture ref{}, dist{};
+
+        try {
+            if (vmaf_picture_alloc(&ref, d->pixelFormat, d->vi->format->bitsPerSample, d->vi->width, d->vi->height) ||
+                vmaf_picture_alloc(&dist, d->pixelFormat, d->vi->format->bitsPerSample, d->vi->width, d->vi->height))
+                throw "failed to allocate picture";
+
+            for (auto plane{ 0 }; plane < d->vi->format->numPlanes; plane++) {
+                if (plane && !d->chroma)
+                    break;
+
+                vs_bitblt(ref.data[plane],
+                          ref.stride[plane],
+                          vsapi->getReadPtr(reference, plane),
+                          vsapi->getStride(reference, plane),
+                          vsapi->getFrameWidth(reference, plane) * d->vi->format->bytesPerSample,
+                          vsapi->getFrameHeight(reference, plane));
+
+                vs_bitblt(dist.data[plane],
+                          dist.stride[plane],
+                          vsapi->getReadPtr(distorted, plane),
+                          vsapi->getStride(distorted, plane),
+                          vsapi->getFrameWidth(distorted, plane) * d->vi->format->bytesPerSample,
+                          vsapi->getFrameHeight(distorted, plane));
+            }
+
+            if (vmaf_read_pictures(d->vmaf, &ref, &dist, n))
+                throw "failed to read pictures";
+        } catch (const char* error) {
+            vsapi->setFilterError(("VMAF: "s + error).c_str(), frameCtx);
+
+            vsapi->freeFrame(reference);
+            vsapi->freeFrame(distorted);
+
+            vmaf_picture_unref(&ref);
+            vmaf_picture_unref(&dist);
+
             return nullptr;
         }
 
-        const VSFrameRef* ref = vsapi->getFrameFilter(n, d->reference, frameCtx);
-        const VSFrameRef* main = vsapi->getFrameFilter(n, d->distorted, frameCtx);
-        d->ref = vsapi->cloneFrameRef(ref);
-        d->main = vsapi->cloneFrameRef(main);
-        d->frameSet = true;
-
-        d->cond.notify_one();
-
-        vsapi->freeFrame(main);
-        return ref;
+        vsapi->freeFrame(distorted);
+        return reference;
     }
 
     return nullptr;
 }
 
-static void VS_CC vmafFree(void* instanceData, VSCore* core, const VSAPI* vsapi) {
-    VMAFData* d = static_cast<VMAFData*>(instanceData);
-
-    d->mutex.lock();
-    d->eof = true;
-    d->cond.notify_one();
-    d->mutex.unlock();
-
-    d->vmafThread.join();
+static void VS_CC vmafFree(void* instanceData, [[maybe_unused]] VSCore* core, const VSAPI* vsapi) {
+    auto d{ static_cast<VMAFData*>(instanceData) };
 
     vsapi->freeNode(d->reference);
     vsapi->freeNode(d->distorted);
 
+    if (vmaf_read_pictures(d->vmaf, nullptr, nullptr, 0))
+        vsapi->logMessage(mtCritical, "failed to flush context");
+
+    for (auto&& m : d->model)
+        if (double score; vmaf_score_pooled(d->vmaf, m, VMAF_POOL_METHOD_MEAN, &score, 0, d->vi->numFrames - 1))
+            vsapi->logMessage(mtCritical, "failed to generate pooled VMAF score");
+
+    for (auto&& m : d->modelCollection)
+        if (VmafModelCollectionScore score; vmaf_score_pooled_model_collection(d->vmaf, m, VMAF_POOL_METHOD_MEAN, &score, 0, d->vi->numFrames - 1))
+            vsapi->logMessage(mtCritical, "failed to generate pooled VMAF score");
+
+    if (vmaf_write_output(d->vmaf, d->logPath.c_str(), d->logFormat))
+        vsapi->logMessage(mtCritical, "failed to write VMAF stats");
+
+    for (auto&& m : d->model)
+        vmaf_model_destroy(m);
+    for (auto&& m : d->modelCollection)
+        vmaf_model_collection_destroy(m);
+    vmaf_close(d->vmaf);
+
     delete d;
 }
 
-static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore* core, const VSAPI* vsapi) {
-    using namespace std::literals;
-
-    std::unique_ptr<VMAFData> d = std::make_unique<VMAFData>();
+static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void* userData, VSCore* core, const VSAPI* vsapi) {
+    auto d{ std::make_unique<VMAFData>() };
 
     try {
         d->reference = vsapi->propGetNode(in, "reference", 0, nullptr);
         d->distorted = vsapi->propGetNode(in, "distorted", 0, nullptr);
         d->vi = vsapi->getVideoInfo(d->reference);
-        d->vsapi = vsapi;
         int err;
 
-        if (!isConstantFormat(d->vi) || d->vi->format->sampleType != stInteger || d->vi->format->bitsPerSample > 16)
-            throw "only constant format 8-16 bit integer input supported";
+        if (!isConstantFormat(d->vi) ||
+            d->vi->format->colorFamily != cmYUV ||
+            d->vi->format->sampleType != stInteger ||
+            d->vi->format->bitsPerSample > 16)
+            throw "only constant YUV format 8-16 bit integer input supported";
 
-        if (d->vi->format->colorFamily == cmRGB)
-            throw "RGB format is not supported";
+        if (!((d->vi->format->subSamplingW == 1 && d->vi->format->subSamplingH == 1) ||
+              (d->vi->format->subSamplingW == 1 && d->vi->format->subSamplingH == 0) ||
+              (d->vi->format->subSamplingW == 0 && d->vi->format->subSamplingH == 0)))
+            throw "only 420/422/444 chroma subsampling is supported";
 
         if (!isSameFormat(vsapi->getVideoInfo(d->distorted), d->vi))
             throw "both clips must have the same format and dimensions";
 
         if (vsapi->getVideoInfo(d->distorted)->numFrames != d->vi->numFrames)
-            throw "both clips' number of frames don't match";
+            throw "both clips' number of frames does not match";
 
-        const int model = int64ToIntS(vsapi->propGetInt(in, "model", 0, &err));
+        d->logPath = vsapi->propGetData(in, "log_path", 0, nullptr);
 
-        const char* logPath = vsapi->propGetData(in, "log_path", 0, &err);
+        auto logFormat{ int64ToIntS(vsapi->propGetInt(in, "log_format", 0, &err)) };
 
-        const int logFmt = int64ToIntS(vsapi->propGetInt(in, "log_fmt", 0, &err));
-
-        d->ssim = !!vsapi->propGetInt(in, "ssim", 0, &err);
-
-        d->ms_ssim = !!vsapi->propGetInt(in, "ms_ssim", 0, &err);
-
-        int pool = int64ToIntS(vsapi->propGetInt(in, "pool", 0, &err));
-        if (err)
-            pool = 1;
-
-        d->ci = !!vsapi->propGetInt(in, "ci", 0, &err);
-
-        if (model < 0 || model > 1)
-            throw "model must be 0 or 1";
-
-        if (logFmt < 0 || logFmt > 2)
-            throw "log_fmt must be 0, 1, or 2";
-
-        if (pool < 0 || pool > 2)
-            throw "pool must be 0, 1, or 2";
-
-        d->fmt = const_cast<char*>("yuv420p");
-
-        const std::string pluginPath{ vsapi->getPluginPath(vsapi->getPluginById("com.holywu.vmaf", core)) };
-        std::string modelPath{ pluginPath.substr(0, pluginPath.find_last_of('/')) };
-        if (model == 0)
-            modelPath += d->ci ? "/model/vmaf_b_v0.6.3/vmaf_b_v0.6.3.pkl" : "/model/vmaf_v0.6.1.pkl";
-        else
-            modelPath += d->ci ? "/model/vmaf_4k_rb_v0.6.2/vmaf_4k_rb_v0.6.2.pkl" : "/model/vmaf_4k_v0.6.1.pkl";
-        d->modelPath = std::make_unique<char[]>(modelPath.length() + 1);
-        std::strcpy(d->modelPath.get(), modelPath.c_str());
-
-        if (logPath) {
-            d->logPath = std::make_unique<char[]>(vsapi->propGetDataSize(in, "log_path", 0, nullptr) + 1);
-            std::strcpy(d->logPath.get(), logPath);
+        std::unique_ptr<int64_t[]> model;
+        auto numModel{ vsapi->propNumElements(in, "model") };
+        if (numModel <= 0) {
+            model = std::make_unique<int64_t[]>(1);
+            model[0] = 0;
+            numModel = 1;
+        } else {
+            model = std::make_unique<int64_t[]>(numModel);
+            for (auto i{ 0 }; i < numModel; i++)
+                model[i] = vsapi->propGetInt(in, "model", i, nullptr);
         }
+        d->model.resize(numModel);
 
-        if (logFmt == 0)
-            d->logFmt = const_cast<char*>("xml");
-        else if (logFmt == 1)
-            d->logFmt = const_cast<char*>("json");
-        else
-            d->logFmt = const_cast<char*>("csv");
+        auto feature{ vsapi->propGetIntArray(in, "feature", &err) };
+        auto numFeature{ vsapi->propNumElements(in, "feature") };
 
-        if (pool == 0)
-            d->pool = const_cast<char*>("mean");
-        else if (pool == 1)
-            d->pool = const_cast<char*>("harmonic_mean");
-        else
-            d->pool = const_cast<char*>("min");
+        if (logFormat < 0 || logFormat > 3)
+            throw "log_format must be 0, 1, 2, or 3";
+
+        d->logFormat = static_cast<VmafOutputFormat>(logFormat + 1);
 
         VSCoreInfo info;
         vsapi->getCoreInfo2(core, &info);
-        d->numThreads = info.numThreads;
 
-        d->factor = 1.0f / (1 << (d->vi->format->bitsPerSample - 8));
+        VmafConfiguration configuration{};
+        configuration.log_level = VMAF_LOG_LEVEL_INFO;
+        configuration.n_threads = info.numThreads;
+        configuration.n_subsample = 1;
+        configuration.cpumask = 0;
 
-        d->vmafThread = std::thread{ callVMAF, d.get() };
+        if (vmaf_init(&d->vmaf, configuration))
+            throw "failed to initialize VMAF context";
+
+        for (auto i{ 0 }; i < numModel; i++) {
+            if (model[i] < 0 || model[i] > 3)
+                throw "model must be 0, 1, 2, or 3";
+
+            if (std::count(model.get(), model.get() + numModel, model[i]) > 1)
+                throw "duplicate model specified";
+
+            VmafModelConfig modelConfig{};
+            modelConfig.name = modelName[model[i]];
+            modelConfig.flags = VMAF_MODEL_FLAGS_DEFAULT;
+
+            if (vmaf_model_load(&d->model[i], &modelConfig, modelVersion[model[i]])) {
+                d->modelCollection.resize(d->modelCollection.size() + 1);
+
+                if (vmaf_model_collection_load(&d->model[i], &d->modelCollection[d->modelCollection.size() - 1], &modelConfig, modelVersion[model[i]]))
+                    throw ("failed to load model: "s + modelVersion[model[i]]).c_str();
+
+                if (vmaf_use_features_from_model_collection(d->vmaf, d->modelCollection[d->modelCollection.size() - 1]))
+                    throw ("failed to load feature extractors from model collection: "s + modelVersion[model[i]]).c_str();
+
+                continue;
+            }
+
+            if (vmaf_use_features_from_model(d->vmaf, d->model[i]))
+                throw ("failed to load feature extractors from model: "s + modelVersion[model[i]]).c_str();
+        }
+
+        for (auto i{ 0 }; i < numFeature; i++) {
+            if (feature[i] < 0 || feature[i] > 4)
+                throw "feature must be 0, 1, 2, 3, or 4";
+
+            if (std::count(feature, feature + numFeature, feature[i]) > 1)
+                throw "duplicate feature specified";
+
+            if (vmaf_use_feature(d->vmaf, featureName[feature[i]], nullptr))
+                throw ("failed to load feature extractor: "s + featureName[feature[i]]).c_str();
+
+            if (!std::strcmp(featureName[feature[i]], "psnr") ||
+                !std::strcmp(featureName[feature[i]], "psnr_hvs") ||
+                !std::strcmp(featureName[feature[i]], "ciede"))
+                d->chroma = true;
+        }
+
+        if (d->vi->format->subSamplingW == 1 && d->vi->format->subSamplingH == 1)
+            d->pixelFormat = VMAF_PIX_FMT_YUV420P;
+        else if (d->vi->format->subSamplingW == 1 && d->vi->format->subSamplingH == 0)
+            d->pixelFormat = VMAF_PIX_FMT_YUV422P;
+        else
+            d->pixelFormat = VMAF_PIX_FMT_YUV444P;
     } catch (const char* error) {
         vsapi->setError(out, ("VMAF: "s + error).c_str());
+
         vsapi->freeNode(d->reference);
         vsapi->freeNode(d->distorted);
+
+        for (auto&& m : d->model)
+            vmaf_model_destroy(m);
+        for (auto&& m : d->modelCollection)
+            vmaf_model_collection_destroy(m);
+        vmaf_close(d->vmaf);
+
         return;
     }
 
@@ -278,12 +285,9 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegiste
     registerFunc("VMAF",
                  "reference:clip;"
                  "distorted:clip;"
-                 "model:int:opt;"
-                 "log_path:data:opt;"
-                 "log_fmt:int:opt;"
-                 "ssim:int:opt;"
-                 "ms_ssim:int:opt;"
-                 "pool:int:opt;"
-                 "ci:int:opt;",
+                 "log_path:data;"
+                 "log_format:int:opt;"
+                 "model:int[]:opt;"
+                 "feature:int[]:opt;",
                  vmafCreate, nullptr, plugin);
 }
