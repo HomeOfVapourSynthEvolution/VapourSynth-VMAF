@@ -278,7 +278,7 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void*
 // Init
 
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* vspapi) {
-    vspapi->configPlugin("com.holywu.vmaf", "vmaf", "Video Multi-Method Assessment Fusion", VS_MAKE_VERSION(7, 0), VAPOURSYNTH_API_VERSION, 0, plugin);
+    vspapi->configPlugin("com.holywu.vmaf", "vmaf", "Video Multi-Method Assessment Fusion", VS_MAKE_VERSION(8, 0), VAPOURSYNTH_API_VERSION, 0, plugin);
     vspapi->registerFunction("VMAF",
                              "reference:vnode;"
                              "distorted:vnode;"
