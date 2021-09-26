@@ -3,7 +3,7 @@ VMAF filter for VapourSynth, based on https://github.com/Netflix/vmaf.
 
 
 ## Usage
-    vmaf.VMAF(clip reference, clip distorted, string log_path[, int log_format=0, int[] model=[0], int[] feature=[]])
+    vmaf.VMAF(vnode reference, vnode distorted, string log_path[, int log_format=0, int[] model=[0], int[] feature=[]])
 
 - reference, distorted: Clips to calculate VMAF score. Only YUV format with integer sample type of 8-16 bit depth and chroma subsampling of 420/422/444 is supported.
 
@@ -21,7 +21,7 @@ VMAF filter for VapourSynth, based on https://github.com/Netflix/vmaf.
   - 2 = vmaf_b_v0.6.3 (Confidence Interval)
   - 3 = vmaf_4k_v0.6.1
 
-- feature: Additional metrics to enable.
+- feature: Additional metrics to calculate.
   - 0 = PSNR
   - 1 = PSNR-HVS
   - 2 = SSIM
@@ -34,5 +34,6 @@ Requires `libvmaf`.
 
 ```
 meson build
+ninja -C build
 ninja -C build install
 ```
