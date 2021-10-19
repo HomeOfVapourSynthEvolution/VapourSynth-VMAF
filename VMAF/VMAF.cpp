@@ -169,22 +169,9 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void*
             throw "both clips' number of frames do not match";
 
         d->logPath = vsapi->mapGetData(in, "log_path", 0, nullptr);
-
         auto logFormat{ vsapi->mapGetIntSaturated(in, "log_format", 0, &err) };
-
-        std::unique_ptr<int64_t[]> model;
+        auto model{ vsapi->mapGetIntArray(in, "model", &err) };
         auto numModels{ vsapi->mapNumElements(in, "model") };
-        if (numModels <= 0) {
-            model = std::make_unique<int64_t[]>(1);
-            model[0] = 0;
-            numModels = 1;
-        } else {
-            model = std::make_unique<int64_t[]>(numModels);
-            for (auto i{ 0 }; i < numModels; i++)
-                model[i] = vsapi->mapGetInt(in, "model", i, nullptr);
-        }
-        d->model.resize(numModels);
-
         auto feature{ vsapi->mapGetIntArray(in, "feature", &err) };
         auto numFeatures{ vsapi->mapNumElements(in, "feature") };
 
@@ -192,6 +179,9 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void*
             throw "log_format must be 0, 1, 2, or 3";
 
         d->logFormat = static_cast<VmafOutputFormat>(logFormat + 1);
+
+        if (numModels > 0)
+            d->model.resize(numModels);
 
         VSCoreInfo info;
         vsapi->getCoreInfo(core, &info);
@@ -209,7 +199,7 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void*
             if (model[i] < 0 || model[i] > 3)
                 throw "model must be 0, 1, 2, or 3";
 
-            if (std::count(model.get(), model.get() + numModels, model[i]) > 1)
+            if (std::count(model, model + numModels, model[i]) > 1)
                 throw "duplicate model specified";
 
             VmafModelConfig modelConfig{};

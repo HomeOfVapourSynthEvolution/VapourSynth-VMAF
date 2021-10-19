@@ -3,7 +3,7 @@ VMAF filter for VapourSynth, based on https://github.com/Netflix/vmaf.
 
 
 ## Usage
-    vmaf.VMAF(vnode reference, vnode distorted, string log_path[, int log_format=0, int[] model=[0], int[] feature=[]])
+    vmaf.VMAF(vnode reference, vnode distorted, string log_path[, int log_format=0, int[] model=None, int[] feature=None])
 
 - reference, distorted: Clips to calculate VMAF score. Only YUV format with integer sample type of 8-16 bit depth and chroma subsampling of 420/422/444 is supported.
 
