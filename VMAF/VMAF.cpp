@@ -25,8 +25,11 @@
 #include <cstring>
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <VapourSynth4.h>
@@ -44,6 +47,7 @@ static constexpr const char* modelVersion[]{ "vmaf_v0.6.1", "vmaf_v0.6.1neg", "v
 static constexpr const char* featureName[]{ "psnr", "psnr_hvs", "float_ssim", "float_ms_ssim", "ciede" };
 
 struct VMAFData final {
+    std::string filterName;
     VSNode* reference;
     VSNode* distorted;
     const VSVideoInfo* vi;
@@ -61,10 +65,11 @@ static const VSFrame* VS_CC vmafGetFrame(int n, int activationReason, void* inst
 
     if (activationReason == arInitial) {
         vsapi->requestFrameFilter(n, d->reference, frameCtx);
-        vsapi->requestFrameFilter(n, d->distorted, frameCtx);
+        if (d->filterName == "VMAF")
+            vsapi->requestFrameFilter(n, d->distorted, frameCtx);
     } else if (activationReason == arAllFramesReady) {
         auto reference{ vsapi->getFrameFilter(n, d->reference, frameCtx) };
-        auto distorted{ vsapi->getFrameFilter(n, d->distorted, frameCtx) };
+        auto distorted{ d->filterName == "VMAF" ? vsapi->getFrameFilter(n, d->distorted, frameCtx) : vsapi->addFrameRef(reference) };
 
         VmafPicture ref{}, dist{};
 
@@ -95,7 +100,7 @@ static const VSFrame* VS_CC vmafGetFrame(int n, int activationReason, void* inst
             if (vmaf_read_pictures(d->vmaf, &ref, &dist, n))
                 throw "failed to read pictures";
         } catch (const char* error) {
-            vsapi->setFilterError(("VMAF: "s + error).c_str(), frameCtx);
+            vsapi->setFilterError((d->filterName + ": " + error).c_str(), frameCtx);
 
             vsapi->freeFrame(reference);
             vsapi->freeFrame(distorted);
@@ -119,19 +124,23 @@ static void VS_CC vmafFree(void* instanceData, VSCore* core, const VSAPI* vsapi)
     vsapi->freeNode(d->reference);
     vsapi->freeNode(d->distorted);
 
+    static auto logMessage = [&](const char* msg) noexcept {
+        vsapi->logMessage(mtCritical, (d->filterName + ": " + msg).c_str(), core);
+    };
+
     if (vmaf_read_pictures(d->vmaf, nullptr, nullptr, 0))
-        vsapi->logMessage(mtCritical, "failed to flush context", core);
+        logMessage("failed to flush context");
 
     for (auto&& m : d->model)
         if (double score; vmaf_score_pooled(d->vmaf, m, VMAF_POOL_METHOD_MEAN, &score, 0, d->vi->numFrames - 1))
-            vsapi->logMessage(mtCritical, "failed to generate pooled VMAF score", core);
+            logMessage("failed to generate pooled VMAF score");
 
     for (auto&& m : d->modelCollection)
         if (VmafModelCollectionScore score; vmaf_score_pooled_model_collection(d->vmaf, m, VMAF_POOL_METHOD_MEAN, &score, 0, d->vi->numFrames - 1))
-            vsapi->logMessage(mtCritical, "failed to generate pooled VMAF score", core);
+            logMessage("failed to generate pooled VMAF score");
 
     if (vmaf_write_output(d->vmaf, d->logPath.c_str(), d->logFormat))
-        vsapi->logMessage(mtCritical, "failed to write VMAF stats", core);
+        logMessage("failed to write VMAF stats");
 
     for (auto&& m : d->model)
         vmaf_model_destroy(m);
@@ -142,12 +151,18 @@ static void VS_CC vmafFree(void* instanceData, VSCore* core, const VSAPI* vsapi)
     delete d;
 }
 
-static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void* userData, VSCore* core, const VSAPI* vsapi) {
+static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore* core, const VSAPI* vsapi) {
     auto d{ std::make_unique<VMAFData>() };
 
     try {
-        d->reference = vsapi->mapGetNode(in, "reference", 0, nullptr);
-        d->distorted = vsapi->mapGetNode(in, "distorted", 0, nullptr);
+        d->filterName = static_cast<const char*>(userData);
+
+        if (d->filterName == "VMAF") {
+            d->reference = vsapi->mapGetNode(in, "reference", 0, nullptr);
+            d->distorted = vsapi->mapGetNode(in, "distorted", 0, nullptr);
+        } else {
+            d->reference = vsapi->mapGetNode(in, "clip", 0, nullptr);
+        }
         d->vi = vsapi->getVideoInfo(d->reference);
         auto err{ 0 };
 
@@ -155,33 +170,20 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void*
             d->vi->format.colorFamily != cfYUV ||
             d->vi->format.sampleType != stInteger ||
             d->vi->format.bitsPerSample > 16)
-            throw "only constant YUV format 8-16 bit integer input supported";
+            throw "only constant YUV format 8-16 bit integer input supported"s;
 
         if (!((d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 1) ||
               (d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 0) ||
               (d->vi->format.subSamplingW == 0 && d->vi->format.subSamplingH == 0)))
-            throw "only 420/422/444 chroma subsampling is supported";
-
-        if (!vsh::isSameVideoInfo(vsapi->getVideoInfo(d->distorted), d->vi))
-            throw "both clips must have the same format and dimensions";
-
-        if (vsapi->getVideoInfo(d->distorted)->numFrames != d->vi->numFrames)
-            throw "both clips' number of frames do not match";
+            throw "only 420/422/444 chroma subsampling is supported"s;
 
         d->logPath = vsapi->mapGetData(in, "log_path", 0, nullptr);
         auto logFormat{ vsapi->mapGetIntSaturated(in, "log_format", 0, &err) };
-        auto model{ vsapi->mapGetIntArray(in, "model", &err) };
-        auto numModels{ vsapi->mapNumElements(in, "model") };
-        auto feature{ vsapi->mapGetIntArray(in, "feature", &err) };
-        auto numFeatures{ vsapi->mapNumElements(in, "feature") };
 
         if (logFormat < 0 || logFormat > 3)
-            throw "log_format must be 0, 1, 2, or 3";
+            throw "log_format must be 0, 1, 2, or 3"s;
 
         d->logFormat = static_cast<VmafOutputFormat>(logFormat + 1);
-
-        if (numModels > 0)
-            d->model.resize(numModels);
 
         VSCoreInfo info;
         vsapi->getCoreInfo(core, &info);
@@ -193,49 +195,111 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void*
         configuration.cpumask = 0;
 
         if (vmaf_init(&d->vmaf, configuration))
-            throw "failed to initialize VMAF context";
+            throw "failed to initialize VMAF context"s;
 
-        for (auto i{ 0 }; i < numModels; i++) {
-            if (model[i] < 0 || model[i] > 3)
-                throw "model must be 0, 1, 2, or 3";
+        if (d->filterName == "VMAF") {
+            if (!vsh::isSameVideoInfo(vsapi->getVideoInfo(d->distorted), d->vi))
+                throw "both clips must have the same format and dimensions"s;
 
-            if (std::count(model, model + numModels, model[i]) > 1)
-                throw "duplicate model specified";
+            if (vsapi->getVideoInfo(d->distorted)->numFrames != d->vi->numFrames)
+                throw "both clips' number of frames do not match"s;
 
-            VmafModelConfig modelConfig{};
-            modelConfig.name = modelName[model[i]];
-            modelConfig.flags = VMAF_MODEL_FLAGS_DEFAULT;
+            auto model{ vsapi->mapGetIntArray(in, "model", &err) };
+            auto numModels{ vsapi->mapNumElements(in, "model") };
+            auto feature{ vsapi->mapGetIntArray(in, "feature", &err) };
+            auto numFeatures{ vsapi->mapNumElements(in, "feature") };
 
-            if (vmaf_model_load(&d->model[i], &modelConfig, modelVersion[model[i]])) {
-                d->modelCollection.resize(d->modelCollection.size() + 1);
+            if (numModels > 0)
+                d->model.resize(numModels);
 
-                if (vmaf_model_collection_load(&d->model[i], &d->modelCollection[d->modelCollection.size() - 1], &modelConfig, modelVersion[model[i]]))
-                    throw ("failed to load model: "s + modelVersion[model[i]]).c_str();
+            for (auto i{ 0 }; i < numModels; i++) {
+                if (model[i] < 0 || model[i] > 3)
+                    throw "model must be 0, 1, 2, or 3"s;
 
-                if (vmaf_use_features_from_model_collection(d->vmaf, d->modelCollection[d->modelCollection.size() - 1]))
-                    throw ("failed to load feature extractors from model collection: "s + modelVersion[model[i]]).c_str();
+                if (std::count(model, model + numModels, model[i]) > 1)
+                    throw "duplicate model specified"s;
 
-                continue;
+                VmafModelConfig modelConfig{};
+                modelConfig.name = modelName[model[i]];
+                modelConfig.flags = VMAF_MODEL_FLAGS_DEFAULT;
+
+                if (vmaf_model_load(&d->model[i], &modelConfig, modelVersion[model[i]])) {
+                    d->modelCollection.resize(d->modelCollection.size() + 1);
+
+                    if (vmaf_model_collection_load(&d->model[i], &d->modelCollection[d->modelCollection.size() - 1], &modelConfig, modelVersion[model[i]]))
+                        throw "failed to load model: "s + modelVersion[model[i]];
+
+                    if (vmaf_use_features_from_model_collection(d->vmaf, d->modelCollection[d->modelCollection.size() - 1]))
+                        throw "failed to load feature extractors from model collection: "s + modelVersion[model[i]];
+
+                    continue;
+                }
+
+                if (vmaf_use_features_from_model(d->vmaf, d->model[i]))
+                    throw "failed to load feature extractors from model: "s + modelVersion[model[i]];
             }
 
-            if (vmaf_use_features_from_model(d->vmaf, d->model[i]))
-                throw ("failed to load feature extractors from model: "s + modelVersion[model[i]]).c_str();
-        }
+            for (auto i{ 0 }; i < numFeatures; i++) {
+                if (feature[i] < 0 || feature[i] > 4)
+                    throw "feature must be 0, 1, 2, 3, or 4"s;
 
-        for (auto i{ 0 }; i < numFeatures; i++) {
-            if (feature[i] < 0 || feature[i] > 4)
-                throw "feature must be 0, 1, 2, 3, or 4";
+                if (std::count(feature, feature + numFeatures, feature[i]) > 1)
+                    throw "duplicate feature specified"s;
 
-            if (std::count(feature, feature + numFeatures, feature[i]) > 1)
-                throw "duplicate feature specified";
+                if (vmaf_use_feature(d->vmaf, featureName[feature[i]], nullptr))
+                    throw "failed to load feature extractor: "s + featureName[feature[i]];
 
-            if (vmaf_use_feature(d->vmaf, featureName[feature[i]], nullptr))
-                throw ("failed to load feature extractor: "s + featureName[feature[i]]).c_str();
+                if (!std::strcmp(featureName[feature[i]], "psnr") ||
+                    !std::strcmp(featureName[feature[i]], "psnr_hvs") ||
+                    !std::strcmp(featureName[feature[i]], "ciede"))
+                    d->chroma = true;
+            }
+        } else {
+            std::array<char, 16> str{};
+            VmafFeatureDictionary* featureDictionary{};
 
-            if (!std::strcmp(featureName[feature[i]], "psnr") ||
-                !std::strcmp(featureName[feature[i]], "psnr_hvs") ||
-                !std::strcmp(featureName[feature[i]], "ciede"))
-                d->chroma = true;
+            static auto setFeature = [&](auto var, const char* varName) {
+                if (auto [ptr, ec] = std::to_chars(str.data(), str.data() + str.size(), var); ec == std::errc())
+                    if (vmaf_feature_dictionary_set(&featureDictionary, varName, std::string(str.data(), ptr).c_str()))
+                        throw "failed to set feature option: "s + varName;
+            };
+
+            auto window_size{ vsapi->mapGetIntSaturated(in, "window_size", 0, &err) };
+            if (!err) {
+                if (window_size < 15 || window_size > 127)
+                    throw "window_size must be between 15 and 127 (inclusive)"s;
+
+                setFeature(window_size, "window_size");
+            }
+
+            auto topk{ vsapi->mapGetFloat(in, "topk", 0, &err) };
+            if (!err) {
+                if (topk < 0.0001 || topk > 1.0)
+                    throw "topk must be between 0.0001 and 1.0 (inclusive)"s;
+
+                setFeature(topk, "topk");
+            }
+
+            auto tvi_threshold{ vsapi->mapGetFloat(in, "tvi_threshold", 0, &err) };
+            if (!err) {
+                if (tvi_threshold < 0.0001 || tvi_threshold > 1.0)
+                    throw "tvi_threshold must be between 0.0001 and 1.0 (inclusive)"s;
+
+                setFeature(tvi_threshold, "tvi_threshold");
+            }
+
+            auto enc_width{ vsapi->mapGetIntSaturated(in, "enc_width", 0, &err) };
+            if (!err)
+                setFeature(enc_width, "enc_width");
+
+            auto enc_height{ vsapi->mapGetIntSaturated(in, "enc_height", 0, &err) };
+            if (!err)
+                setFeature(enc_height, "enc_height");
+
+            if (vmaf_use_feature(d->vmaf, "cambi", featureDictionary)) {
+                vmaf_feature_dictionary_free(&featureDictionary);
+                throw "failed to load feature extractor: cambi"s;
+            }
         }
 
         if (d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 1)
@@ -244,8 +308,8 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void*
             d->pixelFormat = VMAF_PIX_FMT_YUV422P;
         else
             d->pixelFormat = VMAF_PIX_FMT_YUV444P;
-    } catch (const char* error) {
-        vsapi->mapSetError(out, ("VMAF: "s + error).c_str());
+    } catch (const std::string& error) {
+        vsapi->mapSetError(out, (d->filterName + ": " + error).c_str());
 
         vsapi->freeNode(d->reference);
         vsapi->freeNode(d->distorted);
@@ -259,8 +323,12 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void*
         return;
     }
 
-    VSFilterDependency deps[]{ {d->reference, rpStrictSpatial}, {d->distorted, rpStrictSpatial} };
-    vsapi->createVideoFilter(out, "VMAF", d->vi, vmafGetFrame, vmafFree, fmFrameState, deps, 2, d.get(), core);
+    std::vector<VSFilterDependency> deps;
+    deps.push_back({ d->reference, rpStrictSpatial });
+    if (d->filterName == "VMAF")
+        deps.push_back({ d->distorted, rpStrictSpatial });
+
+    vsapi->createVideoFilter(out, d->filterName.c_str(), d->vi, vmafGetFrame, vmafFree, fmFrameState, deps.data(), deps.size(), d.get(), core);
     d.release();
 }
 
@@ -269,6 +337,7 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void*
 
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* vspapi) {
     vspapi->configPlugin("com.holywu.vmaf", "vmaf", "Video Multi-Method Assessment Fusion", VS_MAKE_VERSION(8, 0), VAPOURSYNTH_API_VERSION, 0, plugin);
+
     vspapi->registerFunction("VMAF",
                              "reference:vnode;"
                              "distorted:vnode;"
@@ -277,5 +346,17 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
                              "model:int[]:opt;"
                              "feature:int[]:opt;",
                              "clip:vnode;",
-                             vmafCreate, nullptr, plugin);
+                             vmafCreate, const_cast<char*>("VMAF"), plugin);
+
+    vspapi->registerFunction("CAMBI",
+                             "clip:vnode;"
+                             "log_path:data;"
+                             "log_format:int:opt;"
+                             "window_size:int:opt;"
+                             "topk:float:opt;"
+                             "tvi_threshold:float:opt;"
+                             "enc_width:int:opt;"
+                             "enc_height:int:opt;",
+                             "clip:vnode;",
+                             vmafCreate, const_cast<char*>("CAMBI"), plugin);
 }
