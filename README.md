@@ -1,6 +1,8 @@
 # VMAF
 VMAF filter for VapourSynth, based on https://github.com/Netflix/vmaf.
 
+Additionally, [vsvmafxml](https://pypi.org/project/vsvmafxml) can be used to store per-frame score from XML log as a frame property in clip.
+
 
 ## Usage
     vmaf.VMAF(vnode reference, vnode distorted, string log_path[, int log_format=0, int[] model=None, int[] feature=None])
