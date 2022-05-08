@@ -342,6 +342,199 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore
 }
 
 //////////////////////////////////////////
+// Metric
+
+struct MetricData final {
+    VSNode* reference;
+    VSNode* distorted;
+    const VSVideoInfo* vi;
+    std::vector<int> feature;
+    std::vector<const char*> featureScoreName;
+    VmafConfiguration configuration;
+    VmafPixelFormat pixelFormat;
+    bool chroma;
+};
+
+static const VSFrame* VS_CC metricGetFrame(int n, int activationReason, void* instanceData, [[maybe_unused]] void** frameData, VSFrameContext* frameCtx, VSCore* core, const VSAPI* vsapi) {
+    auto d{ static_cast<const MetricData*>(instanceData) };
+
+    if (activationReason == arInitial) {
+        vsapi->requestFrameFilter(n, d->reference, frameCtx);
+        vsapi->requestFrameFilter(n, d->distorted, frameCtx);
+    } else if (activationReason == arAllFramesReady) {
+        auto reference{ vsapi->getFrameFilter(n, d->reference, frameCtx) };
+        auto distorted{ vsapi->getFrameFilter(n, d->distorted, frameCtx) };
+        auto dst{ vsapi->copyFrame(distorted, core) };
+        auto props{ vsapi->getFramePropertiesRW(dst) };
+
+        VmafContext* vmaf{};
+        VmafPicture ref{};
+        VmafPicture dist{};
+
+        try {
+            if (vmaf_init(&vmaf, d->configuration))
+                throw "failed to initialize VMAF context";
+
+            for (auto&& f : d->feature)
+                if (vmaf_use_feature(vmaf, featureName[f], nullptr))
+                    throw ("failed to load feature extractor: "s + featureName[f]).c_str();
+
+            if (vmaf_picture_alloc(&ref, d->pixelFormat, d->vi->format.bitsPerSample, d->vi->width, d->vi->height) ||
+                vmaf_picture_alloc(&dist, d->pixelFormat, d->vi->format.bitsPerSample, d->vi->width, d->vi->height))
+                throw "failed to allocate picture";
+
+            for (auto plane{ 0 }; plane < d->vi->format.numPlanes; plane++) {
+                if (plane && !d->chroma)
+                    break;
+
+                vsh::bitblt(ref.data[plane],
+                            ref.stride[plane],
+                            vsapi->getReadPtr(reference, plane),
+                            vsapi->getStride(reference, plane),
+                            vsapi->getFrameWidth(reference, plane) * d->vi->format.bytesPerSample,
+                            vsapi->getFrameHeight(reference, plane));
+
+                vsh::bitblt(dist.data[plane],
+                            dist.stride[plane],
+                            vsapi->getReadPtr(distorted, plane),
+                            vsapi->getStride(distorted, plane),
+                            vsapi->getFrameWidth(distorted, plane) * d->vi->format.bytesPerSample,
+                            vsapi->getFrameHeight(distorted, plane));
+            }
+
+            if (vmaf_read_pictures(vmaf, &ref, &dist, 0))
+                throw "failed to read pictures";
+
+            if (vmaf_read_pictures(vmaf, nullptr, nullptr, 0))
+                throw "failed to flush context";
+
+            for (auto&& f : d->featureScoreName) {
+                double score;
+
+                if (vmaf_feature_score_at_index(vmaf, f, &score, 0))
+                    throw ("failed to fetch feature score: "s + f).c_str();
+
+                vsapi->mapSetFloat(props, f, score, maReplace);
+            }
+
+            vmaf_close(vmaf);
+        } catch (const char* error) {
+            vsapi->setFilterError(("Metric: "s + error).c_str(), frameCtx);
+
+            vsapi->freeFrame(reference);
+            vsapi->freeFrame(distorted);
+            vsapi->freeFrame(dst);
+
+            vmaf_close(vmaf);
+            vmaf_picture_unref(&ref);
+            vmaf_picture_unref(&dist);
+
+            return nullptr;
+        }
+
+        vsapi->freeFrame(reference);
+        vsapi->freeFrame(distorted);
+        return dst;
+    }
+
+    return nullptr;
+}
+
+static void VS_CC metricFree(void* instanceData, [[maybe_unused]] VSCore* core, const VSAPI* vsapi) {
+    auto d{ static_cast<MetricData*>(instanceData) };
+    vsapi->freeNode(d->reference);
+    vsapi->freeNode(d->distorted);
+    delete d;
+}
+
+static void VS_CC metricCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void* userData, VSCore* core, const VSAPI* vsapi) {
+    auto d{ std::make_unique<MetricData>() };
+
+    try {
+        d->reference = vsapi->mapGetNode(in, "reference", 0, nullptr);
+        d->distorted = vsapi->mapGetNode(in, "distorted", 0, nullptr);
+        d->vi = vsapi->getVideoInfo(d->reference);
+
+        if (!vsh::isConstantVideoFormat(d->vi) ||
+            d->vi->format.colorFamily != cfYUV ||
+            d->vi->format.sampleType != stInteger ||
+            d->vi->format.bitsPerSample > 16)
+            throw "only constant YUV format 8-16 bit integer input supported";
+
+        if (!((d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 1) ||
+              (d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 0) ||
+              (d->vi->format.subSamplingW == 0 && d->vi->format.subSamplingH == 0)))
+            throw "only 420/422/444 chroma subsampling is supported";
+
+        if (!vsh::isSameVideoInfo(vsapi->getVideoInfo(d->distorted), d->vi))
+            throw "both clips must have the same format and dimensions";
+
+        if (vsapi->getVideoInfo(d->distorted)->numFrames != d->vi->numFrames)
+            throw "both clips' number of frames do not match";
+
+        VSCoreInfo info;
+        vsapi->getCoreInfo(core, &info);
+
+        d->configuration.log_level = VMAF_LOG_LEVEL_INFO;
+        d->configuration.n_threads = info.numThreads;
+        d->configuration.n_subsample = 1;
+        d->configuration.cpumask = 0;
+
+        for (auto i{ 0 }; i < vsapi->mapNumElements(in, "feature"); i++) {
+            d->feature.emplace_back(vsapi->mapGetIntSaturated(in, "feature", i, nullptr));
+
+            if (d->feature[i] < 0 || d->feature[i] > 4)
+                throw "feature must be 0, 1, 2, 3, or 4";
+
+            if (std::count(d->feature.cbegin(), d->feature.cend(), d->feature[i]) > 1)
+                throw "duplicate feature specified";
+
+            switch (d->feature[i]) {
+            case 0:
+                d->featureScoreName.emplace_back("psnr_y");
+                d->featureScoreName.emplace_back("psnr_cb");
+                d->featureScoreName.emplace_back("psnr_cr");
+                d->chroma = true;
+                break;
+            case 1:
+                d->featureScoreName.emplace_back("psnr_hvs_y");
+                d->featureScoreName.emplace_back("psnr_hvs_cb");
+                d->featureScoreName.emplace_back("psnr_hvs_cr");
+                d->featureScoreName.emplace_back("psnr_hvs");
+                d->chroma = true;
+                break;
+            case 2:
+                d->featureScoreName.emplace_back("float_ssim");
+                break;
+            case 3:
+                d->featureScoreName.emplace_back("float_ms_ssim");
+                break;
+            case 4:
+                d->featureScoreName.emplace_back("ciede2000");
+                d->chroma = true;
+                break;
+            }
+        }
+
+        if (d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 1)
+            d->pixelFormat = VMAF_PIX_FMT_YUV420P;
+        else if (d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 0)
+            d->pixelFormat = VMAF_PIX_FMT_YUV422P;
+        else
+            d->pixelFormat = VMAF_PIX_FMT_YUV444P;
+    } catch (const char* error) {
+        vsapi->mapSetError(out, ("Metric: "s + error).c_str());
+        vsapi->freeNode(d->reference);
+        vsapi->freeNode(d->distorted);
+        return;
+    }
+
+    VSFilterDependency deps[]{ {d->reference, rpStrictSpatial}, {d->distorted, rpStrictSpatial} };
+    vsapi->createVideoFilter(out, "Metric", d->vi, metricGetFrame, metricFree, fmParallel, deps, 2, d.get(), core);
+    d.release();
+}
+
+//////////////////////////////////////////
 // Init
 
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* vspapi) {
@@ -369,4 +562,11 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
                              "enc_height:int:opt;",
                              "clip:vnode;",
                              vmafCreate, const_cast<char*>("CAMBI"), plugin);
+
+    vspapi->registerFunction("Metric",
+                             "reference:vnode;"
+                             "distorted:vnode;"
+                             "feature:int[];",
+                             "clip:vnode;",
+                             metricCreate, nullptr, plugin);
 }

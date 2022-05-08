@@ -59,6 +59,21 @@ The CAMBI score starts at 0, meaning no banding is detected. A higher CAMBI scor
 - enc_width, enc_height: Encoding/processing resolution to compute the banding score, useful in cases where scaling was applied to the input prior to the computation of metrics.
 
 
+---
+    vmaf.Metric(vnode reference, vnode distorted, int[] feature)
+
+Compute the metrics and store the scores as frame properties.
+
+- reference, distorted: Clips to compute score. Only YUV format with integer sample type of 8-16 bit depth and chroma subsampling of 420/422/444 is supported.
+
+- feature: Metrics to compute.
+  - 0 = PSNR
+  - 1 = PSNR-HVS
+  - 2 = SSIM
+  - 3 = MS-SSIM
+  - 4 = CIEDE2000
+
+
 ## Compilation
 Requires `libvmaf`.
 
