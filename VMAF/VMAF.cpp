@@ -22,8 +22,6 @@
     SOFTWARE.
 */
 
-#include <cstring>
-
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -250,10 +248,12 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore
                 if (vmaf_use_feature(d->vmaf, featureName[feature[i]], nullptr))
                     throw "failed to load feature extractor: "s + featureName[feature[i]];
 
-                if (!std::strcmp(featureName[feature[i]], "psnr") ||
-                    !std::strcmp(featureName[feature[i]], "psnr_hvs") ||
-                    !std::strcmp(featureName[feature[i]], "ciede"))
+                switch (feature[i]) {
+                case 0:
+                case 1:
+                case 4:
                     d->chroma = true;
+                }
             }
         } else {
             std::array<char, 32> str{};
