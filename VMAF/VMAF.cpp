@@ -71,7 +71,8 @@ static const VSFrame* VS_CC vmafGetFrame(int n, int activationReason, void* inst
         auto reference{ vsapi->getFrameFilter(n, d->reference, frameCtx) };
         auto distorted{ d->filterName == "VMAF" ? vsapi->getFrameFilter(n, d->distorted, frameCtx) : vsapi->addFrameRef(reference) };
 
-        VmafPicture ref{}, dist{};
+        VmafPicture ref;
+        VmafPicture dist;
 
         try {
             if (vmaf_picture_alloc(&ref, d->pixelFormat, d->vi->format.bitsPerSample, d->vi->width, d->vi->height) ||
@@ -164,7 +165,7 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore
             d->reference = vsapi->mapGetNode(in, "clip", 0, nullptr);
         }
         d->vi = vsapi->getVideoInfo(d->reference);
-        auto err{ 0 };
+        int err;
 
         if (!vsh::isConstantVideoFormat(d->vi) ||
             d->vi->format.colorFamily != cfYUV ||
@@ -255,13 +256,13 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore
                     d->chroma = true;
             }
         } else {
-            std::array<char, 16> str{};
+            std::array<char, 32> str{};
             VmafFeatureDictionary* featureDictionary{};
 
-            static auto setFeature = [&](auto var, const char* varName) {
-                if (auto [ptr, ec] = std::to_chars(str.data(), str.data() + str.size(), var); ec == std::errc())
-                    if (vmaf_feature_dictionary_set(&featureDictionary, varName, std::string(str.data(), ptr).c_str()))
-                        throw "failed to set feature option: "s + varName;
+            static auto setFeatureDictionary = [&](auto val, const char* key) {
+                if (auto [ptr, ec] = std::to_chars(str.data(), str.data() + str.size(), val); ec == std::errc())
+                    if (vmaf_feature_dictionary_set(&featureDictionary, key, std::string(str.data(), ptr).c_str()))
+                        throw "failed to set feature option: "s + key;
             };
 
             auto window_size{ vsapi->mapGetIntSaturated(in, "window_size", 0, &err) };
@@ -269,7 +270,7 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore
                 if (window_size < 15 || window_size > 127)
                     throw "window_size must be between 15 and 127 (inclusive)"s;
 
-                setFeature(window_size, "window_size");
+                setFeatureDictionary(window_size, "window_size");
             }
 
             auto topk{ vsapi->mapGetFloat(in, "topk", 0, &err) };
@@ -277,7 +278,7 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore
                 if (topk < 0.0001 || topk > 1.0)
                     throw "topk must be between 0.0001 and 1.0 (inclusive)"s;
 
-                setFeature(topk, "topk");
+                setFeatureDictionary(topk, "topk");
             }
 
             auto tvi_threshold{ vsapi->mapGetFloat(in, "tvi_threshold", 0, &err) };
@@ -285,16 +286,24 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore
                 if (tvi_threshold < 0.0001 || tvi_threshold > 1.0)
                     throw "tvi_threshold must be between 0.0001 and 1.0 (inclusive)"s;
 
-                setFeature(tvi_threshold, "tvi_threshold");
+                setFeatureDictionary(tvi_threshold, "tvi_threshold");
+            }
+
+            auto max_log_contrast{ vsapi->mapGetIntSaturated(in, "max_log_contrast", 0, &err) };
+            if (!err) {
+                if (max_log_contrast < 0 || max_log_contrast > 5)
+                    throw "max_log_contrast must be between 0 and 5 (inclusive)"s;
+
+                setFeatureDictionary(max_log_contrast, "max_log_contrast");
             }
 
             auto enc_width{ vsapi->mapGetIntSaturated(in, "enc_width", 0, &err) };
             if (!err)
-                setFeature(enc_width, "enc_width");
+                setFeatureDictionary(enc_width, "enc_width");
 
             auto enc_height{ vsapi->mapGetIntSaturated(in, "enc_height", 0, &err) };
             if (!err)
-                setFeature(enc_height, "enc_height");
+                setFeatureDictionary(enc_height, "enc_height");
 
             if (vmaf_use_feature(d->vmaf, "cambi", featureDictionary)) {
                 vmaf_feature_dictionary_free(&featureDictionary);
@@ -355,6 +364,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
                              "window_size:int:opt;"
                              "topk:float:opt;"
                              "tvi_threshold:float:opt;"
+                             "max_log_contrast:int:opt;"
                              "enc_width:int:opt;"
                              "enc_height:int:opt;",
                              "clip:vnode;",

@@ -15,7 +15,7 @@ endif
 
 if gcc_syntax
   vapoursynth_dep = dependency('vapoursynth', version: '>=55').partial_dependency(compile_args: true, includes: true)
-  libvmaf_dep = dependency('libvmaf', version: '>=2.3.0')
+  libvmaf_dep = dependency('libvmaf', version: '>=2.3.1')
   deps = [vapoursynth_dep, libvmaf_dep]
   install_dir = vapoursynth_dep.get_variable(pkgconfig: 'libdir') / 'vapoursynth'
 else
