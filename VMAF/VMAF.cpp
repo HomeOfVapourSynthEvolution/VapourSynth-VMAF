@@ -58,7 +58,8 @@ struct VMAFData final {
     bool chroma;
 };
 
-static const VSFrame* VS_CC vmafGetFrame(int n, int activationReason, void* instanceData, [[maybe_unused]] void** frameData, VSFrameContext* frameCtx, [[maybe_unused]] VSCore* core, const VSAPI* vsapi) {
+static const VSFrame* VS_CC vmafGetFrame(int n, int activationReason, void* instanceData, [[maybe_unused]] void** frameData,
+                                         VSFrameContext* frameCtx, [[maybe_unused]] VSCore* core, const VSAPI* vsapi) {
     auto d{ static_cast<const VMAFData*>(instanceData) };
 
     if (activationReason == arInitial) {
@@ -364,7 +365,8 @@ struct MetricData final {
     bool chroma;
 };
 
-static const VSFrame* VS_CC metricGetFrame(int n, int activationReason, void* instanceData, [[maybe_unused]] void** frameData, VSFrameContext* frameCtx, VSCore* core, const VSAPI* vsapi) {
+static const VSFrame* VS_CC metricGetFrame(int n, int activationReason, void* instanceData, [[maybe_unused]] void** frameData,
+                                           VSFrameContext* frameCtx, VSCore* core, const VSAPI* vsapi) {
     auto d{ static_cast<const MetricData*>(instanceData) };
 
     if (activationReason == arInitial) {
@@ -411,7 +413,7 @@ static const VSFrame* VS_CC metricGetFrame(int n, int activationReason, void* in
                             vsapi->getFrameHeight(distorted, plane));
             }
 
-            if (vmaf_read_pictures(vmaf, &ref, &dist, 0))
+            if (vmaf_read_pictures(vmaf, &ref, &dist, n))
                 throw "failed to read pictures";
 
             if (vmaf_read_pictures(vmaf, nullptr, nullptr, 0))
@@ -420,7 +422,7 @@ static const VSFrame* VS_CC metricGetFrame(int n, int activationReason, void* in
             for (auto&& f : d->featureScoreName) {
                 double score;
 
-                if (vmaf_feature_score_at_index(vmaf, f, &score, 0))
+                if (vmaf_feature_score_at_index(vmaf, f, &score, n))
                     throw ("failed to fetch feature score: "s + f).c_str();
 
                 vsapi->mapSetFloat(props, f, score, maReplace);
