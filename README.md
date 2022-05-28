@@ -7,7 +7,7 @@ Additionally, [vsvmafxml](https://pypi.org/project/vsvmafxml) can be used to sto
 ## Usage
     vmaf.VMAF(vnode reference, vnode distorted, string log_path[, int log_format=0, int[] model=None, int[] feature=None])
 
-- reference, distorted: Clips to compute VMAF score. Only YUV format with integer sample type of 8-16 bit depth and chroma subsampling of 420/422/444 is supported.
+- reference, distorted: Clips to compute VMAF score. Only YUV format with integer sample type of 8, 10, 12 and 16 bit depth and chroma subsampling of 420/422/444 is supported.
 
 - log_path: Path to the log file.
 
@@ -38,7 +38,7 @@ CAMBI (Contrast Aware Multiscale Banding Index) is Netflix's detector for bandin
 
 The CAMBI score starts at 0, meaning no banding is detected. A higher CAMBI score means more visible banding artifacts are identified. The maximum CAMBI observed in a sequence is 24 (unwatchable). As a rule of thumb, a CAMBI score around 5 is where banding starts to become slightly annoying (also note that banding is highly dependent on the viewing environment - the brigher the display, and the dimmer the ambient light, the more visible banding is).
 
-- clip: Clip to compute CAMBI score. Only YUV format with integer sample type of 8-16 bit depth and chroma subsampling of 420/422/444 is supported.
+- clip: Clip to compute CAMBI score. Only YUV format with integer sample type of 8, 10, 12 and 16 bit depth and chroma subsampling of 420/422/444 is supported.
 
 - log_path: Path to the log file.
 
@@ -64,7 +64,7 @@ The CAMBI score starts at 0, meaning no banding is detected. A higher CAMBI scor
 
 Compute the metrics and store the scores as frame properties.
 
-- reference, distorted: Clips to compute score. Only YUV format with integer sample type of 8-16 bit depth and chroma subsampling of 420/422/444 is supported.
+- reference, distorted: Clips to compute score. Only YUV format with integer sample type of 8, 10, 12 and 16 bit depth and chroma subsampling of 420/422/444 is supported.
 
 - feature: Metrics to compute.
   - 0 = PSNR

@@ -167,9 +167,18 @@ static void VS_CC vmafCreate(const VSMap* in, VSMap* out, void* userData, VSCore
 
         if (!vsh::isConstantVideoFormat(d->vi) ||
             d->vi->format.colorFamily != cfYUV ||
-            d->vi->format.sampleType != stInteger ||
-            d->vi->format.bitsPerSample > 16)
-            throw "only constant YUV format 8-16 bit integer input supported"s;
+            d->vi->format.sampleType != stInteger)
+            throw "only constant YUV format integer input supported";
+
+        switch (d->vi->format.bitsPerSample) {
+        case 8:
+        case 10:
+        case 12:
+        case 16:
+            break;
+        default:
+            throw "only 8, 10, 12 and 16 bit depth supported";
+        }
 
         if (!((d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 1) ||
               (d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 0) ||
@@ -457,9 +466,18 @@ static void VS_CC metricCreate(const VSMap* in, VSMap* out, [[maybe_unused]] voi
 
         if (!vsh::isConstantVideoFormat(d->vi) ||
             d->vi->format.colorFamily != cfYUV ||
-            d->vi->format.sampleType != stInteger ||
-            d->vi->format.bitsPerSample > 16)
-            throw "only constant YUV format 8-16 bit integer input supported";
+            d->vi->format.sampleType != stInteger)
+            throw "only constant YUV format integer input supported";
+
+        switch (d->vi->format.bitsPerSample) {
+        case 8:
+        case 10:
+        case 12:
+        case 16:
+            break;
+        default:
+            throw "only 8, 10, 12 and 16 bit depth supported";
+        }
 
         if (!((d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 1) ||
               (d->vi->format.subSamplingW == 1 && d->vi->format.subSamplingH == 0) ||
